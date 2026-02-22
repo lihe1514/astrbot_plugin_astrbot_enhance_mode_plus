@@ -7,7 +7,7 @@
   },
   "mention_parse": {
     "description": "@ 提及解析",
-    "hint": "解析 LLM 输出中的 <mention id=\"用户ID\"> 标签，替换为真正的 @ 消息组件。需要开启「增强群聊上下文」并包含发送者 ID。",
+    "hint": "解析 LLM 输出中的 <mention id=\"用户ID\"> 标签，替换为真正的 @ 消息组件。同时解析 <quote id=\"消息ID\"> 标签为引用回复。需要开启「增强群聊上下文」并包含发送者 ID。⚠️ 与内置「引用回复」(reply_with_quote) 互斥，请先关闭内置引用回复。",
     "type": "bool",
     "default": true
   },
@@ -31,7 +31,7 @@
     "items": {
       "enable": {
         "description": "启用",
-        "hint": "启用增强群聊上下文记录。请先开启「React 模式」，并关闭 AstrBot 内置的「群聊上下文感知」和「主动回复」选项。",
+        "hint": "启用增强群聊上下文记录。请先开启「React 模式」，并关闭 AstrBot 内置的「群聊上下文感知」、「主动回复」和「引用回复」(reply_with_quote) 选项。",
         "type": "bool",
         "default": false
       },
@@ -76,24 +76,48 @@
   },
   "active_reply": {
     "description": "主动回复",
-    "hint": "在群聊中随机回复消息（无需被 @）。完全替代内置的「主动回复」功能。依赖「React 模式」开启。",
+    "hint": "在群聊中主动回复消息（无需被 @）。支持「概率触发」和「模型选择触发」两种模式。依赖「React 模式」开启。",
     "type": "object",
     "items": {
       "enable": {
         "description": "启用",
-        "hint": "启用群聊主动回复。请先开启「React 模式」并关闭 AstrBot 内置的「主动回复」选项。",
+        "hint": "启用群聊主动回复。请先开启「React 模式」并关闭 AstrBot 内置的「主动回复」和「引用回复」(reply_with_quote) 选项。",
         "type": "bool",
         "default": false
       },
+      "mode": {
+        "description": "触发模式",
+        "hint": "可选 probability（概率触发）或 model_choice（模型选择触发）。",
+        "type": "string",
+        "default": "probability"
+      },
       "possibility": {
         "description": "回复概率",
-        "hint": "对每条群消息回复的概率（0.0 - 1.0）。例如 0.1 表示 10% 的概率。",
+        "hint": "当 mode=probability 时生效。对每条群消息回复的概率（0.0 - 1.0）。",
         "type": "float",
         "default": 0.1
       },
+      "model_stack_size": {
+        "description": "模型触发栈长度",
+        "hint": "当 mode=model_choice 时生效。累计到该条数后触发一次模型判定。",
+        "type": "int",
+        "default": 8
+      },
+      "model_history_messages": {
+        "description": "模型判定历史上下文条数",
+        "hint": "当 mode=model_choice 时生效。判定时额外附带最近多少条历史消息作为上下文（0 表示不附带）。",
+        "type": "int",
+        "default": 0
+      },
+      "model_choice_prompt": {
+        "description": "模型判定提示词",
+        "hint": "当 mode=model_choice 时生效。可使用 {stack_size}、{messages}、{history_count}、{history_context}、{persona_name}、{persona_mask} 占位符，模型需只输出 REPLY 或 SKIP。",
+        "type": "string",
+        "default": "你当前的人格面具是：{persona_name}\n人格设定如下：\n{persona_mask}\n\n你正在群聊中扮演助手。以下是最近 {stack_size} 条群聊消息：\n{messages}\n\n额外历史上下文（最近 {history_count} 条）：\n{history_context}\n\n请严格站在该人格的角度判断你是否应该主动回复。如果需要回复，只输出 REPLY；如果不需要回复，只输出 SKIP。"
+      },
       "whitelist": {
         "description": "白名单",
-        "hint": "用英文逗号分隔的 unified_msg_origin 或群 ID 列表，限制主动回复的范围。留空则对所有群生效。",
+        "hint": "用英文逗号分隔的 unified_msg_origin 或群 ID 列表，限制主动回复范围。留空则对所有群生效。",
         "type": "string",
         "default": ""
       }

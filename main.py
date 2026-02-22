@@ -5,9 +5,9 @@ import traceback
 import uuid
 from collections import defaultdict
 
-from astrbot.api import logger, star
+from astrbot.api import logger, sp, star
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import At, Image, Plain
+from astrbot.api.message_components import At, Image, Plain, Reply
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import LLMResponse, Provider, ProviderRequest
 from astrbot.core.agent.message import TextPart
@@ -19,6 +19,9 @@ class Main(star.Star):
         self.context = context
         self.config = config or {}
         self.session_chats: dict[str, list[str]] = defaultdict(list)
+        self.active_reply_stacks: dict[str, list[str]] = defaultdict(list)
+        self.model_choice_histories: dict[str, list[str]] = defaultdict(list)
+        self.pending_model_choice_context: dict[str, list[str]] = {}
 
     def _react_mode_cfg(self):
         rm = self.config.get("react_mode", {})
@@ -45,17 +48,256 @@ class Main(star.Star):
     def _active_reply_cfg(self):
         ar = self.config.get("active_reply", {})
         react_mode_enable = self._react_mode_cfg()["enable"]
-        whitelist_str = ar.get("whitelist", "")
-        whitelist = (
-            [w.strip() for w in whitelist_str.split(",") if w.strip()]
-            if whitelist_str
-            else []
-        )
+        whitelist_raw = ar.get("whitelist", "")
+        if isinstance(whitelist_raw, str):
+            whitelist = [w.strip() for w in whitelist_raw.split(",") if w.strip()]
+        elif isinstance(whitelist_raw, (list, tuple, set)):
+            whitelist = [str(w).strip() for w in whitelist_raw if str(w).strip()]
+        else:
+            whitelist = []
+
+        mode = str(ar.get("mode", "probability")).strip().lower()
+        if mode not in ("probability", "model_choice"):
+            mode = "probability"
+
+        try:
+            model_stack_size = int(ar.get("model_stack_size", 8))
+        except (TypeError, ValueError):
+            model_stack_size = 8
+        model_stack_size = max(1, model_stack_size)
+
+        try:
+            model_history_messages = int(ar.get("model_history_messages", 0))
+        except (TypeError, ValueError):
+            model_history_messages = 0
+        model_history_messages = max(0, model_history_messages)
+
         return {
             "enable": ar.get("enable", False) and react_mode_enable,
+            "mode": mode,
             "possibility": ar.get("possibility", 0.1),
             "whitelist": whitelist,
+            "model_stack_size": model_stack_size,
+            "model_history_messages": model_history_messages,
+            "model_choice_prompt": ar.get(
+                "model_choice_prompt",
+                (
+                    "你当前的人格面具是：{persona_name}\n"
+                    "人格设定如下：\n{persona_mask}\n\n"
+                    "你正在群聊中扮演助手。以下是最近 {stack_size} 条群聊消息：\n"
+                    "{messages}\n\n"
+                    "额外历史上下文（最近 {history_count} 条）：\n"
+                    "{history_context}\n\n"
+                    "请严格站在该人格的角度判断你是否应该主动回复。"
+                    "如果需要回复，只输出 REPLY；如果不需要回复，只输出 SKIP。"
+                ),
+            ),
         }
+
+    def _allow_active_reply(self, event: AstrMessageEvent, ar: dict) -> bool:
+        if not ar["enable"]:
+            return False
+        if event.get_message_type() != MessageType.GROUP_MESSAGE:
+            return False
+        if event.is_at_or_wake_command:
+            return False
+        if ar["whitelist"] and (
+            event.unified_msg_origin not in ar["whitelist"]
+            and (event.get_group_id() and event.get_group_id() not in ar["whitelist"])
+        ):
+            return False
+        return True
+
+    async def _resolve_persona_mask(self, event: AstrMessageEvent) -> tuple[str, str]:
+        """Resolve effective persona (same priority as main agent) for model-choice judging."""
+        persona_id = ""
+        try:
+            session_service_config = await sp.get_async(
+                scope="umo",
+                scope_id=event.unified_msg_origin,
+                key="session_service_config",
+                default={},
+            )
+            if isinstance(session_service_config, dict):
+                persona_id = str(session_service_config.get("persona_id") or "").strip()
+        except Exception as e:
+            logger.debug(f"enhance-mode | 获取 session persona 失败: {e}")
+
+        if not persona_id:
+            try:
+                curr_cid = (
+                    await self.context.conversation_manager.get_curr_conversation_id(
+                        event.unified_msg_origin,
+                    )
+                )
+                if curr_cid:
+                    conv = await self.context.conversation_manager.get_conversation(
+                        event.unified_msg_origin,
+                        curr_cid,
+                    )
+                    if conv and conv.persona_id:
+                        persona_id = str(conv.persona_id).strip()
+            except Exception as e:
+                logger.debug(f"enhance-mode | 获取 conversation persona 失败: {e}")
+
+        if not persona_id:
+            cfg = self.context.get_config(umo=event.unified_msg_origin)
+            persona_id = str(
+                cfg.get("provider_settings", {}).get("default_personality") or ""
+            ).strip()
+
+        if persona_id == "[%None]":
+            return "none", "No persona mask."
+
+        persona = None
+        if persona_id:
+            try:
+                persona = next(
+                    (
+                        p
+                        for p in self.context.persona_manager.personas_v3
+                        if p.get("name") == persona_id
+                    ),
+                    None,
+                )
+            except Exception:
+                persona = None
+
+        if not persona:
+            try:
+                persona = await self.context.persona_manager.get_default_persona_v3(
+                    event.unified_msg_origin
+                )
+            except Exception:
+                persona = {"name": "default", "prompt": ""}
+
+        persona_name = str(persona.get("name") or "default")
+        persona_prompt = str(persona.get("prompt") or "").strip()
+        if not persona_prompt:
+            persona_prompt = "You are a helpful and friendly assistant."
+        return persona_name, persona_prompt
+
+    async def _judge_model_choice(
+        self,
+        event: AstrMessageEvent,
+        ar: dict,
+        origin: str,
+        messages: list[str],
+        trigger_reason: str,
+    ) -> bool:
+        self.pending_model_choice_context.pop(origin, None)
+        history = self.model_choice_histories[origin]
+        history_context_lines = []
+        if ar["model_history_messages"] > 0:
+            history_context_lines = history[-ar["model_history_messages"] :]
+        history_context = (
+            "\n".join(history_context_lines)
+            if history_context_lines
+            else "(disabled or no additional history)"
+        )
+        logger.info(
+            "enhance-mode | model_choice | 开始判定 | "
+            f"origin={origin} trigger={trigger_reason} stack_size={len(messages)} "
+            f"history={len(history_context_lines)}"
+        )
+
+        provider = self.context.get_using_provider(event.unified_msg_origin)
+        if not provider or not isinstance(provider, Provider):
+            logger.error("enhance-mode | 未找到可用提供商，无法执行模型选择触发")
+            return False
+
+        persona_name, persona_mask = await self._resolve_persona_mask(event)
+        prompt_tmpl = str(ar["model_choice_prompt"])
+        try:
+            judge_prompt = prompt_tmpl.format(
+                stack_size=len(messages),
+                messages="\n".join(messages),
+                history_count=len(history_context_lines),
+                history_context=history_context,
+                persona_name=persona_name,
+                persona_mask=persona_mask,
+            )
+        except Exception:
+            judge_prompt = (
+                f"{prompt_tmpl}\n\n"
+                f"人格面具({persona_name}):\n{persona_mask}\n\n"
+                f"最近消息:\n{chr(10).join(messages)}\n\n"
+                f"额外历史上下文({len(history_context_lines)}):\n{history_context}\n\n"
+                "请仅输出 REPLY 或 SKIP。"
+            )
+
+        try:
+            judge_resp = await provider.text_chat(
+                prompt=judge_prompt,
+                session_id=uuid.uuid4().hex,
+                persist=False,
+            )
+        except Exception as e:
+            logger.error(f"enhance-mode | 模型选择触发判定失败: {e}")
+            return False
+
+        decision_raw = (judge_resp.completion_text or "").strip().upper()
+        decision = decision_raw.split()[0] if decision_raw else ""
+        if decision.startswith("REPLY"):
+            self.pending_model_choice_context[origin] = messages
+            logger.info(
+                "enhance-mode | model_choice | 判定通过(REPLY) | "
+                f"origin={origin} trigger={trigger_reason} persona={persona_name}"
+            )
+            return True
+        if decision and not decision.startswith("SKIP"):
+            logger.info(
+                "enhance-mode | model_choice | 判定拒绝(非标准输出按 SKIP) | "
+                f"origin={origin} trigger={trigger_reason} output={decision_raw}"
+            )
+            return False
+        logger.info(
+            "enhance-mode | model_choice | 判定拒绝(SKIP) | "
+            f"origin={origin} trigger={trigger_reason} persona={persona_name}"
+        )
+        return False
+
+    async def _need_active_reply_model_choice(
+        self, event: AstrMessageEvent, ar: dict
+    ) -> bool:
+        origin = event.unified_msg_origin
+        text = (event.message_str or "").strip() or "[Empty]"
+        nickname = event.message_obj.sender.nickname
+        sender_id = event.get_sender_id()
+        stack = self.active_reply_stacks[origin]
+        history = self.model_choice_histories[origin]
+
+        stack.append(f"[{nickname}/{sender_id}]: {text}")
+        history_line = (
+            f"[{nickname}/{sender_id}/"
+            f"{datetime.datetime.now().strftime('%H:%M:%S')}]: {text}"
+        )
+        history.append(history_line)
+        history_limit = max(
+            60,
+            ar["model_stack_size"] * 6,
+            ar["model_history_messages"] * 6,
+        )
+        if len(history) > history_limit:
+            del history[:-history_limit]
+        logger.info(
+            "enhance-mode | model_choice | 栈填充 | "
+            f"origin={origin} progress={len(stack)}/{ar['model_stack_size']} "
+            f"sender={sender_id}"
+        )
+
+        if len(stack) < ar["model_stack_size"]:
+            return False
+
+        messages = stack[-ar["model_stack_size"] :]
+        stack.clear()
+        return await self._judge_model_choice(
+            event,
+            ar,
+            origin,
+            messages,
+            trigger_reason="stack_full",
+        )
 
     async def _get_image_caption(
         self, image_url: str, provider_id: str, prompt: str
@@ -76,19 +318,14 @@ class Main(star.Star):
         )
         return response.completion_text
 
-    def _need_active_reply(self, event: AstrMessageEvent) -> bool:
+    async def _need_active_reply(self, event: AstrMessageEvent) -> bool:
         ar = self._active_reply_cfg()
-        if not ar["enable"]:
+        if not self._allow_active_reply(event, ar):
             return False
-        if event.get_message_type() != MessageType.GROUP_MESSAGE:
-            return False
-        if event.is_at_or_wake_command:
-            return False
-        if ar["whitelist"] and (
-            event.unified_msg_origin not in ar["whitelist"]
-            and (event.get_group_id() and event.get_group_id() not in ar["whitelist"])
-        ):
-            return False
+
+        if ar["mode"] == "model_choice":
+            return await self._need_active_reply_model_choice(event, ar)
+
         return random.random() < ar["possibility"]
 
     @filter.on_llm_request()
@@ -137,13 +374,14 @@ class Main(star.Star):
         if not gc["enable"] and not self._active_reply_cfg()["enable"]:
             return
 
-        has_image_or_plain = any(
-            isinstance(comp, (Plain, Image)) for comp in event.message_obj.message
+        has_content = any(
+            isinstance(comp, (Plain, Image, Reply))
+            for comp in event.message_obj.message
         )
-        if not has_image_or_plain:
+        if not has_content:
             return
 
-        need_active = self._need_active_reply(event)
+        need_active = await self._need_active_reply(event)
 
         if gc["enable"]:
             try:
@@ -157,6 +395,20 @@ class Main(star.Star):
                 logger.error("enhance-mode | 未找到任何 LLM 提供商，无法主动回复")
                 return
             try:
+                ar = self._active_reply_cfg()
+                model_choice_messages = []
+                if ar["mode"] == "model_choice":
+                    model_choice_messages = self.pending_model_choice_context.pop(
+                        event.unified_msg_origin, []
+                    )
+                if hasattr(event, "set_extra"):
+                    event.set_extra("_enhance_active_reply_triggered", True)
+                    event.set_extra("_enhance_active_reply_mode", ar["mode"])
+                    if ar["mode"] == "model_choice":
+                        event.set_extra(
+                            "_enhance_model_choice_messages",
+                            model_choice_messages,
+                        )
                 session_curr_cid = (
                     await self.context.conversation_manager.get_curr_conversation_id(
                         event.unified_msg_origin,
@@ -189,22 +441,29 @@ class Main(star.Star):
     async def _record_message(self, event: AstrMessageEvent, gc: dict):
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")
         nickname = event.message_obj.sender.nickname
+        msg_id = event.message_obj.message_id
 
         if gc["include_sender_id"] and gc["include_role_tag"]:
             sender_id = event.get_sender_id()
             role_tag = "(admin)" if event.is_admin() else "(member)"
-            parts = [f"[{nickname}/{sender_id}/{datetime_str}]{role_tag}: "]
+            header = f"[{nickname}/{sender_id}/{datetime_str}]{role_tag} #msg{msg_id}:"
         elif gc["include_sender_id"]:
             sender_id = event.get_sender_id()
-            parts = [f"[{nickname}/{sender_id}/{datetime_str}]: "]
+            header = f"[{nickname}/{sender_id}/{datetime_str}] #msg{msg_id}:"
         elif gc["include_role_tag"]:
             role_tag = "(admin)" if event.is_admin() else "(member)"
-            parts = [f"[{nickname}/{datetime_str}]{role_tag}: "]
+            header = f"[{nickname}/{datetime_str}]{role_tag} #msg{msg_id}:"
         else:
-            parts = [f"[{nickname}/{datetime_str}]: "]
+            header = f"[{nickname}/{datetime_str}] #msg{msg_id}:"
+
+        parts = [header]
 
         for comp in event.get_messages():
-            if isinstance(comp, Plain):
+            if isinstance(comp, Reply):
+                quote_nick = comp.sender_nickname or "Unknown"
+                quote_text = (comp.message_str or "").strip() or "..."
+                parts.append(f" [Quote {quote_nick}: {quote_text}]")
+            elif isinstance(comp, Plain):
                 parts.append(f" {comp.text}")
             elif isinstance(comp, Image):
                 if gc["image_caption"]:
@@ -246,26 +505,10 @@ class Main(star.Star):
 
         chats_str = "\n---\n".join(self.session_chats[event.unified_msg_origin])
 
-        if (
-            react_mode["enable"]
-            and event.get_message_type() == MessageType.GROUP_MESSAGE
-        ):
-            prompt = req.prompt
-            req.prompt = (
-                f"You are now in a chatroom. The chat history is as follows:\n{chats_str}"
-                f"\nNow, a new message is coming: `{prompt}`. "
-                "Please react to it. Only output your response and do not output any other information. "
-                "You MUST use the SAME language as the chatroom is using."
-            )
-            req.contexts = []
-        else:
-            req.system_prompt += (
-                "You are now in a chatroom. The chat history is as follows: \n"
-            )
-            req.system_prompt += chats_str
-
+        # Build interaction instructions (mention + quote)
+        interaction_instructions = ""
         if self.config.get("mention_parse", True) and gc["include_sender_id"]:
-            req.system_prompt += (
+            interaction_instructions += (
                 "\n\n## Mention\n"
                 'When you want to mention/@ a user in your reply, use the format: <mention id="user_id">.\n'
                 'For example: <mention id="123456"> Hello!\n'
@@ -273,46 +516,146 @@ class Main(star.Star):
                 "The user_id can be found in the chat history format [nickname/user_id/time].\n"
                 "Do NOT use this format for yourself."
             )
+        interaction_instructions += (
+            "\n\n## Quote\n"
+            'When you want to quote/reply to a specific message, place <quote id="msg_id"> '
+            "at the very beginning of your reply.\n"
+            'For example: <quote id="12345"> I agree with this!\n'
+            "The msg_id can be found in the chat history after the # symbol (e.g. #msg12345).\n"
+            "You can only quote ONE message per reply. The quote tag MUST be the first thing in your output.\n"
+            "Only use quote when it is meaningful to reference a specific message."
+        )
+
+        if (
+            react_mode["enable"]
+            and event.get_message_type() == MessageType.GROUP_MESSAGE
+        ):
+            is_active_triggered = event.get_extra(
+                "_enhance_active_reply_triggered", False
+            )
+            active_mode = event.get_extra("_enhance_active_reply_mode", "")
+            if is_active_triggered and active_mode == "model_choice":
+                # model_choice: the model freely chooses what to reply to and how
+                candidates = event.get_extra("_enhance_model_choice_messages", []) or []
+                candidate_lines = (
+                    "\n".join(f"- {m}" for m in candidates)
+                    if isinstance(candidates, list)
+                    else str(candidates)
+                )
+                if not candidate_lines.strip():
+                    candidate_lines = (
+                        "(No explicit candidate list. Choose from recent chat history.)"
+                    )
+                req.prompt = (
+                    f"You are now in a chatroom. The chat history is as follows:\n{chats_str}\n\n"
+                    "You decided to actively join this conversation because some recent messages are worth replying to.\n"
+                    "Choose the message(s) you want to respond to from the candidate list below, "
+                    "and compose a natural reply. Quote the message you choose in most cases.\n"
+                    f"Candidate messages:\n{candidate_lines}\n"
+                    f"{interaction_instructions}\n\n"
+                    "Only output your final reply. Use the SAME language as the chatroom."
+                )
+            else:
+                # probability active reply or @-triggered: reply as a reaction
+                prompt = req.prompt
+                req.prompt = (
+                    f"You are now in a chatroom. The chat history is as follows:\n{chats_str}\n\n"
+                    f"Now, a new message is coming: `{prompt}`. "
+                    "Please react to it. Your entire output is your reply to this message. Quote the message which is coming in most cases. "
+                    "Only output your response and do not output any other information. "
+                    f"You MUST use the SAME language as the chatroom is using."
+                    f"{interaction_instructions}"
+                )
+            req.contexts = []
+        else:
+            req.system_prompt += (
+                "You are now in a chatroom. The chat history is as follows: \n"
+            )
+            req.system_prompt += chats_str
+            req.system_prompt += interaction_instructions
 
     _MENTION_RE = re.compile(r'<mention\s+id="([^"]+)"\s*/?>')
+    _QUOTE_RE = re.compile(r'<quote\s+id="([^"]+)"\s*/?>')
+
+    @staticmethod
+    def _normalize_quote_id(raw_id: str | None) -> str:
+        """Normalize quote id so both `12345` and `msg12345` are accepted."""
+        if not raw_id:
+            return ""
+        quote_id = str(raw_id).strip()
+        if quote_id.startswith("#"):
+            quote_id = quote_id[1:]
+        if quote_id.lower().startswith("msg"):
+            quote_id = quote_id[3:]
+        return quote_id.strip()
 
     @filter.on_decorating_result()
-    async def parse_mentions(self, event: AstrMessageEvent) -> None:
-        """Parse <mention id="xxx"> tags in LLM output and replace with At components.
+    async def parse_tags(self, event: AstrMessageEvent) -> None:
+        """Parse <mention> and <quote> tags in LLM output into message components.
 
-        Note: This hook is NOT called for STREAMING_RESULT (the pipeline returns
-        early before hooks run). For STREAMING_FINISH the text has already been
-        sent. Therefore mention parsing only works with streaming disabled.
+        For segmented reply compatibility: this hook runs at on_decorating_result,
+        BEFORE text segmentation. The RespondStage will extract Reply as a header
+        and only send it with the first segment, then clear it for subsequent segments.
         """
-        if not self.config.get("mention_parse", True):
-            return
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
         result = event.get_result()
         if not result or not result.chain:
             return
 
-        # Check if any Plain component contains mention tags
-        has_mention = any(
-            isinstance(comp, Plain) and self._MENTION_RE.search(comp.text)
+        # --- Phase 1: Extract the first <quote> tag from the entire chain ---
+        quote_msg_id = None
+        if any(
+            isinstance(comp, Plain) and self._QUOTE_RE.search(comp.text)
+            for comp in result.chain
+        ):
+            # Find and extract the first quote tag
+            for comp in result.chain:
+                if isinstance(comp, Plain):
+                    m = self._QUOTE_RE.search(comp.text)
+                    if m:
+                        quote_msg_id = self._normalize_quote_id(m.group(1))
+                        break
+
+        # --- Phase 2: Clean all <quote> tags from text and parse <mention> ---
+        parse_mention = self.config.get("mention_parse", True)
+        has_tags = any(
+            isinstance(comp, Plain)
+            and (
+                self._QUOTE_RE.search(comp.text)
+                or (parse_mention and self._MENTION_RE.search(comp.text))
+            )
             for comp in result.chain
         )
-        if not has_mention:
+        if not has_tags and not quote_msg_id:
             return
 
         new_chain = []
         for comp in result.chain:
-            if not isinstance(comp, Plain) or not self._MENTION_RE.search(comp.text):
+            if not isinstance(comp, Plain):
                 new_chain.append(comp)
                 continue
-            parts = self._MENTION_RE.split(comp.text)
-            # parts: [text, id, text, id, text, ...]
-            for i, part in enumerate(parts):
-                if i % 2 == 0:
-                    if part:
-                        new_chain.append(Plain(text=part))
-                else:
-                    new_chain.append(At(qq=part))
+
+            text = comp.text
+            # Remove all <quote> tags from text (already extracted the ID above)
+            text = self._QUOTE_RE.sub("", text)
+
+            if parse_mention and self._MENTION_RE.search(text):
+                parts = self._MENTION_RE.split(text)
+                for i, part in enumerate(parts):
+                    if i % 2 == 0:
+                        if part.strip():
+                            new_chain.append(Plain(text=part))
+                    else:
+                        new_chain.append(At(qq=part))
+            else:
+                if text.strip():
+                    new_chain.append(Plain(text=text))
+
+        # Insert Reply component at position 0 if a quote was found
+        if quote_msg_id:
+            new_chain.insert(0, Reply(id=quote_msg_id))
+
         result.chain = new_chain
 
     @filter.on_llm_response()
@@ -329,8 +672,9 @@ class Main(star.Star):
             return
 
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")
-        # Clean mention tags for history recording
+        # Clean mention and quote tags for history recording
         text = self._MENTION_RE.sub(r"[At: \1]", resp.completion_text)
+        text = self._QUOTE_RE.sub("", text).strip()
         final_message = f"[You/{datetime_str}]: {text}"
         logger.debug(
             f"enhance-mode | recorded AI response: "
@@ -343,9 +687,13 @@ class Main(star.Star):
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
         """Clean up session chats when conversation is cleared."""
-        gc = self._group_context_cfg()
-        if not gc["enable"]:
-            return
         clean_session = event.get_extra("_clean_ltm_session", False)
-        if clean_session and event.unified_msg_origin in self.session_chats:
+        if not clean_session:
+            return
+        if event.unified_msg_origin in self.session_chats:
             del self.session_chats[event.unified_msg_origin]
+        if event.unified_msg_origin in self.active_reply_stacks:
+            del self.active_reply_stacks[event.unified_msg_origin]
+        if event.unified_msg_origin in self.model_choice_histories:
+            del self.model_choice_histories[event.unified_msg_origin]
+        self.pending_model_choice_context.pop(event.unified_msg_origin, None)
