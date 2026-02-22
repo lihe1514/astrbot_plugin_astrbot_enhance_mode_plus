@@ -1,9 +1,10 @@
+import asyncio
 import datetime
 import random
 import re
 import traceback
 import uuid
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from astrbot.api import logger, sp, star
 from astrbot.api.event import AstrMessageEvent, filter
@@ -14,6 +15,8 @@ from astrbot.core.agent.message import TextPart
 
 
 class Main(star.Star):
+    _DEFAULT_MAX_ORIGINS = 500
+
     def __init__(self, context: star.Context, config: dict | None = None) -> None:
         super().__init__(context, config)
         self.context = context
@@ -21,7 +24,47 @@ class Main(star.Star):
         self.session_chats: dict[str, list[str]] = defaultdict(list)
         self.active_reply_stacks: dict[str, list[str]] = defaultdict(list)
         self.model_choice_histories: dict[str, list[str]] = defaultdict(list)
-        self.pending_model_choice_context: dict[str, list[str]] = {}
+        self._origin_lru: OrderedDict[str, None] = OrderedDict()
+
+    def _timeout_cfg(self) -> dict[str, float]:
+        tc = self.config.get("timeouts", {})
+
+        def _as_pos_float(val, default: float) -> float:
+            try:
+                x = float(val)
+                return x if x > 0 else default
+            except (TypeError, ValueError):
+                return default
+
+        return {
+            "image_caption_sec": _as_pos_float(tc.get("image_caption_sec", 45), 45.0),
+            "model_choice_sec": _as_pos_float(tc.get("model_choice_sec", 45), 45.0),
+        }
+
+    def _lru_cfg(self) -> dict[str, int]:
+        lru = self.config.get("lru_cache", {})
+        try:
+            max_origins = int(lru.get("max_origins", self._DEFAULT_MAX_ORIGINS))
+        except (TypeError, ValueError):
+            max_origins = self._DEFAULT_MAX_ORIGINS
+        return {
+            "max_origins": max(1, max_origins),
+        }
+
+    def _evict_origin_state(self, origin: str) -> None:
+        self.session_chats.pop(origin, None)
+        self.active_reply_stacks.pop(origin, None)
+        self.model_choice_histories.pop(origin, None)
+
+    def _touch_origin(self, origin: str) -> None:
+        if not origin:
+            return
+        self._origin_lru.pop(origin, None)
+        self._origin_lru[origin] = None
+        max_origins = self._lru_cfg()["max_origins"]
+        while len(self._origin_lru) > max_origins:
+            oldest, _ = self._origin_lru.popitem(last=False)
+            self._evict_origin_state(oldest)
 
     def _react_mode_cfg(self):
         rm = self.config.get("react_mode", {})
@@ -37,8 +80,7 @@ class Main(star.Star):
             "max_messages": gc.get("max_messages", 300),
             "include_sender_id": gc.get("include_sender_id", True),
             "include_role_tag": gc.get("include_role_tag", True),
-            "image_caption": gc.get("image_caption", False)
-            and bool(gc.get("image_caption_provider_id")),
+            "image_caption": gc.get("image_caption", False),
             "image_caption_provider_id": gc.get("image_caption_provider_id", ""),
             "image_caption_prompt": gc.get(
                 "image_caption_prompt", "Describe this image in one sentence."
@@ -185,7 +227,6 @@ class Main(star.Star):
         messages: list[str],
         trigger_reason: str,
     ) -> bool:
-        self.pending_model_choice_context.pop(origin, None)
         history = self.model_choice_histories[origin]
         history_context_lines = []
         if ar["model_history_messages"] > 0:
@@ -227,11 +268,17 @@ class Main(star.Star):
             )
 
         try:
-            judge_resp = await provider.text_chat(
-                prompt=judge_prompt,
-                session_id=uuid.uuid4().hex,
-                persist=False,
+            judge_resp = await asyncio.wait_for(
+                provider.text_chat(
+                    prompt=judge_prompt,
+                    session_id=uuid.uuid4().hex,
+                    persist=False,
+                ),
+                timeout=self._timeout_cfg()["model_choice_sec"],
             )
+        except asyncio.TimeoutError:
+            logger.error("enhance-mode | 模型选择触发判定超时")
+            return False
         except Exception as e:
             logger.error(f"enhance-mode | 模型选择触发判定失败: {e}")
             return False
@@ -239,7 +286,6 @@ class Main(star.Star):
         decision_raw = (judge_resp.completion_text or "").strip().upper()
         decision = decision_raw.split()[0] if decision_raw else ""
         if decision.startswith("REPLY"):
-            self.pending_model_choice_context[origin] = messages
             logger.info(
                 "enhance-mode | model_choice | 判定通过(REPLY) | "
                 f"origin={origin} trigger={trigger_reason} persona={persona_name}"
@@ -261,6 +307,7 @@ class Main(star.Star):
         self, event: AstrMessageEvent, ar: dict
     ) -> bool:
         origin = event.unified_msg_origin
+        self._touch_origin(origin)
         text = (event.message_str or "").strip() or "[Empty]"
         nickname = event.message_obj.sender.nickname
         sender_id = event.get_sender_id()
@@ -310,11 +357,14 @@ class Main(star.Star):
                 raise Exception(f"没有找到 ID 为 {provider_id} 的提供商")
         if not isinstance(provider, Provider):
             raise Exception(f"提供商类型错误({type(provider)})，无法获取图片描述")
-        response = await provider.text_chat(
-            prompt=prompt,
-            session_id=uuid.uuid4().hex,
-            image_urls=[image_url],
-            persist=False,
+        response = await asyncio.wait_for(
+            provider.text_chat(
+                prompt=prompt,
+                session_id=uuid.uuid4().hex,
+                image_urls=[image_url],
+                persist=False,
+            ),
+            timeout=self._timeout_cfg()["image_caption_sec"],
         )
         return response.completion_text
 
@@ -354,7 +404,8 @@ class Main(star.Star):
                     if newline_idx != -1:
                         insert_pos = nickname_idx + newline_idx
                     else:
-                        insert_pos = part.text.index("</system_reminder>")
+                        close_idx = part.text.find("</system_reminder>")
+                        insert_pos = close_idx if close_idx != -1 else len(part.text)
                     part.text = (
                         part.text[:insert_pos] + role_line + part.text[insert_pos:]
                     )
@@ -396,19 +447,9 @@ class Main(star.Star):
                 return
             try:
                 ar = self._active_reply_cfg()
-                model_choice_messages = []
-                if ar["mode"] == "model_choice":
-                    model_choice_messages = self.pending_model_choice_context.pop(
-                        event.unified_msg_origin, []
-                    )
                 if hasattr(event, "set_extra"):
                     event.set_extra("_enhance_active_reply_triggered", True)
                     event.set_extra("_enhance_active_reply_mode", ar["mode"])
-                    if ar["mode"] == "model_choice":
-                        event.set_extra(
-                            "_enhance_model_choice_messages",
-                            model_choice_messages,
-                        )
                 session_curr_cid = (
                     await self.context.conversation_manager.get_curr_conversation_id(
                         event.unified_msg_origin,
@@ -487,6 +528,7 @@ class Main(star.Star):
 
         final_message = "".join(parts)
         logger.debug(f"enhance-mode | {event.unified_msg_origin} | {final_message}")
+        self._touch_origin(event.unified_msg_origin)
         self.session_chats[event.unified_msg_origin].append(final_message)
         if len(self.session_chats[event.unified_msg_origin]) > gc["max_messages"]:
             self.session_chats[event.unified_msg_origin].pop(0)
@@ -503,7 +545,11 @@ class Main(star.Star):
         if event.unified_msg_origin not in self.session_chats:
             return
 
+        self._touch_origin(event.unified_msg_origin)
         chats_str = "\n---\n".join(self.session_chats[event.unified_msg_origin])
+        bounded_chats_str = (
+            f"=== CHAT_HISTORY_BEGIN ===\n{chats_str}\n=== CHAT_HISTORY_END ==="
+        )
 
         # Build interaction instructions (mention + quote)
         interaction_instructions = ""
@@ -536,30 +582,20 @@ class Main(star.Star):
             active_mode = event.get_extra("_enhance_active_reply_mode", "")
             if is_active_triggered and active_mode == "model_choice":
                 # model_choice: the model freely chooses what to reply to and how
-                candidates = event.get_extra("_enhance_model_choice_messages", []) or []
-                candidate_lines = (
-                    "\n".join(f"- {m}" for m in candidates)
-                    if isinstance(candidates, list)
-                    else str(candidates)
-                )
-                if not candidate_lines.strip():
-                    candidate_lines = (
-                        "(No explicit candidate list. Choose from recent chat history.)"
-                    )
                 req.prompt = (
-                    f"You are now in a chatroom. The chat history is as follows:\n{chats_str}\n\n"
+                    f"You are now in a chatroom. The chat history is as follows:\n{bounded_chats_str}\n\n"
                     "You decided to actively join this conversation because some recent messages are worth replying to.\n"
-                    "Choose the message(s) you want to respond to from the candidate list below, "
+                    "Choose the message(s) you want to respond to from the chat history above, "
                     "and compose a natural reply. Quote the message you choose in most cases.\n"
-                    f"Candidate messages:\n{candidate_lines}\n"
-                    f"{interaction_instructions}\n\n"
-                    "Only output your final reply. Use the SAME language as the chatroom."
+                    "Only output your response and do not output any other information. "
+                    f"You MUST use the SAME language as the chatroom is using."
+                    f"{interaction_instructions}"
                 )
             else:
                 # probability active reply or @-triggered: reply as a reaction
                 prompt = req.prompt
                 req.prompt = (
-                    f"You are now in a chatroom. The chat history is as follows:\n{chats_str}\n\n"
+                    f"You are now in a chatroom. The chat history is as follows:\n{bounded_chats_str}\n\n"
                     f"Now, a new message is coming: `{prompt}`. "
                     "Please react to it. Your entire output is your reply to this message. Quote the message which is coming in most cases. "
                     "Only output your response and do not output any other information. "
@@ -571,7 +607,7 @@ class Main(star.Star):
             req.system_prompt += (
                 "You are now in a chatroom. The chat history is as follows: \n"
             )
-            req.system_prompt += chats_str
+            req.system_prompt += bounded_chats_str
             req.system_prompt += interaction_instructions
 
     _MENTION_RE = re.compile(r'<mention\s+id="([^"]+)"\s*/?>')
@@ -680,6 +716,7 @@ class Main(star.Star):
             f"enhance-mode | recorded AI response: "
             f"{event.unified_msg_origin} | {final_message}"
         )
+        self._touch_origin(event.unified_msg_origin)
         self.session_chats[event.unified_msg_origin].append(final_message)
         if len(self.session_chats[event.unified_msg_origin]) > gc["max_messages"]:
             self.session_chats[event.unified_msg_origin].pop(0)
@@ -696,4 +733,4 @@ class Main(star.Star):
             del self.active_reply_stacks[event.unified_msg_origin]
         if event.unified_msg_origin in self.model_choice_histories:
             del self.model_choice_histories[event.unified_msg_origin]
-        self.pending_model_choice_context.pop(event.unified_msg_origin, None)
+        self._origin_lru.pop(event.unified_msg_origin, None)

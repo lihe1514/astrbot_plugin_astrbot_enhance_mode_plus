@@ -24,6 +24,38 @@
       }
     }
   },
+  "lru_cache": {
+    "description": "LRU 缓存限制",
+    "hint": "限制插件同时保留的会话来源数量，避免长期运行内存增长。",
+    "type": "object",
+    "items": {
+      "max_origins": {
+        "description": "最大来源数",
+        "hint": "最多保留多少个 unified_msg_origin 的缓存状态。超出后会淘汰最久未使用来源。",
+        "type": "int",
+        "default": 500
+      }
+    }
+  },
+  "timeouts": {
+    "description": "超时设置",
+    "hint": "外部模型调用超时（秒）。用于图片转述与 model_choice 判定。",
+    "type": "object",
+    "items": {
+      "image_caption_sec": {
+        "description": "图片转述超时(秒)",
+        "hint": "图片转述调用 LLM 的超时时间（秒）。",
+        "type": "float",
+        "default": 45
+      },
+      "model_choice_sec": {
+        "description": "模型判定超时(秒)",
+        "hint": "model_choice 判定调用 LLM 的超时时间（秒）。",
+        "type": "float",
+        "default": 45
+      }
+    }
+  },
   "group_context": {
     "description": "增强群聊上下文",
     "hint": "以增强格式（含发送者 ID、角色标签）记录群聊消息并注入 LLM 上下文。完全替代内置的「群聊上下文感知」功能。依赖「React 模式」开启。",
@@ -55,7 +87,7 @@
       },
       "image_caption": {
         "description": "图片转述",
-        "hint": "使用 LLM 为群聊中的图片生成文字描述。需要配置转述使用的提供商 ID。",
+        "hint": "使用 LLM 为群聊中的图片生成文字描述。可选配置专用提供商 ID，留空时使用当前默认提供商。",
         "type": "bool",
         "default": false
       },

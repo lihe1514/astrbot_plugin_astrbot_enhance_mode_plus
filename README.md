@@ -77,8 +77,16 @@ Current datetime: 2026-02-22 21:00 (CST)</system_reminder>
 启用后，插件在群聊请求中会使用以下模式：
 
 1. 注入群聊历史
-2. 将当前消息作为"new message"让模型做即时反应
+2. 将当前消息作为“new message”让模型做即时反应
 3. 清空 `req.contexts`，避免与 react 提示词冲突
+
+### 运行保护
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `lru_cache.max_origins` | int | `500` | 最多保留的来源（`unified_msg_origin`）缓存数量，超出按 LRU 淘汰 |
+| `timeouts.image_caption_sec` | float | `45` | 图片转述调用 LLM 的超时时间（秒） |
+| `timeouts.model_choice_sec` | float | `45` | `model_choice` 判定调用 LLM 的超时时间（秒） |
 
 ### 增强群聊上下文
 
