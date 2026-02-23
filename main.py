@@ -551,25 +551,28 @@ class Main(star.Star):
             f"=== CHAT_HISTORY_BEGIN ===\n{chats_str}\n=== CHAT_HISTORY_END ==="
         )
 
-        # Build interaction instructions (mention + quote)
+        # 构造给模型的“交互控制标签”说明。
+        # 这里把 mention/quote 当成控制指令而不是容器标签，尽量减少模型输出 </mention> / </quote> 的概率。
         interaction_instructions = ""
         if self.config.get("mention_parse", True) and gc["include_sender_id"]:
             interaction_instructions += (
                 "\n\n## Mention\n"
-                'When you want to mention/@ a user in your reply, use the format: <mention id="user_id">.\n'
-                'For example: <mention id="123456"> Hello!\n'
+                'When you want to mention/@ a user in your reply, use a control tag: <mention id="user_id"/>.\n'
+                'For example: <mention id="123456"/> Hello!\n'
                 "You can mention multiple users in one message. "
                 "The user_id can be found in the chat history format [nickname/user_id/time].\n"
-                "Do NOT use this format for yourself."
+                "Do NOT use this format for yourself.\n"
+                "Important: mention tag is NOT a container tag. Do NOT output </mention>."
             )
         interaction_instructions += (
             "\n\n## Quote\n"
-            'When you want to quote/reply to a specific message, place <quote id="msg_id"> '
+            'When you want to quote/reply to a specific message, place <quote id="msg_id"/> '
             "at the very beginning of your reply.\n"
-            'For example: <quote id="12345"> I agree with this!\n'
+            'For example: <quote id="12345"/> I agree with this!\n'
             "The msg_id can be found in the chat history after the # symbol (e.g. #msg12345).\n"
             "You can only quote ONE message per reply. The quote tag MUST be the first thing in your output.\n"
-            "Only use quote when it is meaningful to reference a specific message."
+            "Only use quote when it is meaningful to reference a specific message.\n"
+            "Important: quote tag is NOT a container tag. Do NOT output </quote>."
         )
 
         if (
@@ -604,14 +607,25 @@ class Main(star.Star):
                 )
             req.contexts = []
         else:
+            # 非主动回复场景：把上下文写入 system_prompt，保留原始用户问题结构。
             req.system_prompt += (
                 "You are now in a chatroom. The chat history is as follows: \n"
             )
             req.system_prompt += bounded_chats_str
             req.system_prompt += interaction_instructions
 
-    _MENTION_RE = re.compile(r'<mention\s+id="([^"]+)"\s*/?>')
-    _QUOTE_RE = re.compile(r'<quote\s+id="([^"]+)"\s*/?>')
+    # 兼容大小写、单双引号、以及 id = "xxx" 这种带空格写法，降低模型格式漂移导致的匹配失败。
+    _MENTION_RE = re.compile(
+        r"""<mention\s+id\s*=\s*['"]([^'"]+)['"]\s*/?>""",
+        re.IGNORECASE,
+    )
+    _QUOTE_RE = re.compile(
+        r"""<quote\s+id\s*=\s*['"]([^'"]+)['"]\s*/?>""",
+        re.IGNORECASE,
+    )
+    # 闭标签单独兜底：即使模型输出了错误的容器式闭标签，也要在发送前清理。
+    _MENTION_CLOSE_RE = re.compile(r"</mention\s*>", re.IGNORECASE)
+    _QUOTE_CLOSE_RE = re.compile(r"</quote\s*>", re.IGNORECASE)
 
     @staticmethod
     def _normalize_quote_id(raw_id: str | None) -> str:
@@ -639,7 +653,8 @@ class Main(star.Star):
         if not result or not result.chain:
             return
 
-        # --- Phase 1: Extract the first <quote> tag from the entire chain ---
+        # --- Phase 1: 在整条消息链中只提取“第一个 quote” ---
+        # 平台语义通常只支持一次引用，因此只保留首个 quote，避免多引用产生歧义。
         quote_msg_id = None
         if any(
             isinstance(comp, Plain) and self._QUOTE_RE.search(comp.text)
@@ -653,12 +668,15 @@ class Main(star.Star):
                         quote_msg_id = self._normalize_quote_id(m.group(1))
                         break
 
-        # --- Phase 2: Clean all <quote> tags from text and parse <mention> ---
+        # --- Phase 2: 清理 quote 并解析 mention ---
+        # has_tags 不仅看开标签，也看闭标签：防止仅有 </quote> / </mention> 时提前 return 导致脏文本透传。
         parse_mention = self.config.get("mention_parse", True)
         has_tags = any(
             isinstance(comp, Plain)
             and (
                 self._QUOTE_RE.search(comp.text)
+                or self._QUOTE_CLOSE_RE.search(comp.text)
+                or self._MENTION_CLOSE_RE.search(comp.text)
                 or (parse_mention and self._MENTION_RE.search(comp.text))
             )
             for comp in result.chain
@@ -675,16 +693,24 @@ class Main(star.Star):
             text = comp.text
             # Remove all <quote> tags from text (already extracted the ID above)
             text = self._QUOTE_RE.sub("", text)
+            # 同时移除闭标签，处理模型误输出容器标签的情况。
+            text = self._QUOTE_CLOSE_RE.sub("", text)
 
             if parse_mention and self._MENTION_RE.search(text):
+                # split 后奇偶位交替为：普通文本 / mention_id / 普通文本 / mention_id ...
                 parts = self._MENTION_RE.split(text)
                 for i, part in enumerate(parts):
                     if i % 2 == 0:
+                        # 普通文本片段里也可能夹杂孤立闭标签，继续兜底清理。
+                        part = self._MENTION_CLOSE_RE.sub("", part)
                         if part.strip():
                             new_chain.append(Plain(text=part))
                     else:
+                        # mention 标签转换为平台 At 组件，后续由平台完成 @ 行为。
                         new_chain.append(At(qq=part))
             else:
+                # 关闭 mention_parse 时也要清理闭标签，避免原样回显给用户。
+                text = self._MENTION_CLOSE_RE.sub("", text)
                 if text.strip():
                     new_chain.append(Plain(text=text))
 
@@ -708,9 +734,12 @@ class Main(star.Star):
             return
 
         datetime_str = datetime.datetime.now().strftime("%H:%M:%S")
-        # Clean mention and quote tags for history recording
+        # 写入会话历史前做一次清洗，避免控制标签污染后续 chat history 注入内容。
         text = self._MENTION_RE.sub(r"[At: \1]", resp.completion_text)
-        text = self._QUOTE_RE.sub("", text).strip()
+        text = self._MENTION_CLOSE_RE.sub("", text)
+        text = self._QUOTE_RE.sub("", text)
+        text = self._QUOTE_CLOSE_RE.sub("", text)
+        text = text.strip()
         final_message = f"[You/{datetime_str}]: {text}"
         logger.debug(
             f"enhance-mode | recorded AI response: "
