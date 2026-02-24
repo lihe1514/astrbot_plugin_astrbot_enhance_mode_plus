@@ -744,7 +744,7 @@ class Main(star.Star):
                         )
                         parts.append(f" [Image: {caption}]")
                     except Exception as e:
-                        logger.error(f"enhance-mode | 获取图片描述失败: {e}")
+                        logger.exception("enhance-mode | 获取图片描述失败: %s", e)
                         parts.append(" [Image]")
                 else:
                     parts.append(" [Image]")
