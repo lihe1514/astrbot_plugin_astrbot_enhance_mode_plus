@@ -66,7 +66,7 @@ class GroupHistoryEnhancementConfig:
     include_role_tag: bool = True
     image_caption: bool = False
     image_caption_provider_id: str = ""
-    image_caption_prompt: str = "用一句话描述这张图片。"
+    image_caption_prompt: str = "Please describe the image using Chinese."
 
 
 @dataclass(frozen=True)
@@ -172,7 +172,8 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
             group_history_raw.get("image_caption_provider_id") or ""
         ),
         image_caption_prompt=str(
-            group_history_raw.get("image_caption_prompt") or "用一句话描述这张图片。"
+            group_history_raw.get("image_caption_prompt")
+            or "Please describe the image using Chinese."
         ),
     )
 

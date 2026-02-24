@@ -129,7 +129,7 @@
 | `include_role_tag` | bool | `true` | 历史中包含角色标签 |
 | `image_caption` | bool | `false` | 启用图片描述能力与按需转述工具（历史默认仍记录为 `[Image]`） |
 | `image_caption_provider_id` | string | `""` | 图片转述提供商 ID，空则默认 |
-| `image_caption_prompt` | string | `"用一句话描述这张图片。"` | 图片转述提示词 |
+| `image_caption_prompt` | string | `"Please describe the image using Chinese."` | 图片转述提示词 |
 
 ### `active_reply`
 

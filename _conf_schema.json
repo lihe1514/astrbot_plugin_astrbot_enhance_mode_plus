@@ -45,7 +45,7 @@
                 "description": "图片转述提示词",
                 "hint": "发送给图片转述模型的提示词。",
                 "type": "string",
-                "default": "用一句话描述这张图片。"
+                "default": "Please describe the image using Chinese."
             }
         }
     },
