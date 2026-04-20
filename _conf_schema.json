@@ -102,6 +102,18 @@
                 "hint": "英文逗号分隔的 unified_msg_origin 或群 ID。留空表示所有群可触发。",
                 "type": "string",
                 "default": ""
+            },
+            "auto_create_session": {
+                "description": "自动创建会话",
+                "hint": "无会话时自动创建。关闭则无会话时跳过主动回复并输出错误日志。",
+                "type": "bool",
+                "default": false
+            },
+            "auto_session_title": {
+                "description": "自动创建会话标题",
+                "hint": "自动创建会话时使用的标题模板。可用占位符：{group_id}、{platform_id}。",
+                "type": "string",
+                "default": "主动回复-{group_id}"
             }
         }
     },

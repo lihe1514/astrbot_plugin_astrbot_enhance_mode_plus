@@ -16,6 +16,8 @@ def test_parse_plugin_config_defaults() -> None:
     assert cfg.active_reply_enabled is False
     assert cfg.web_search.request_mode == "auto"
     assert cfg.web_search.base_url_override == ""
+    assert cfg.active_reply.auto_create_session is False
+    assert cfg.active_reply.auto_session_title == "主动回复-{group_id}"
 
 
 def test_probability_is_clamped_and_nan_falls_back() -> None:
@@ -76,3 +78,24 @@ def test_web_search_request_mode_and_base_override_are_normalized() -> None:
 
     cfg_invalid = parse_plugin_config({"web_search": {"request_mode": "unknown"}})
     assert cfg_invalid.web_search.request_mode == "auto"
+
+
+def test_active_reply_auto_create_session_parsing() -> None:
+    cfg_enabled = parse_plugin_config(
+        {
+            "active_reply": {
+                "auto_create_session": True,
+                "auto_session_title": "自定义标题-{group_id}",
+            }
+        }
+    )
+    assert cfg_enabled.active_reply.auto_create_session is True
+    assert cfg_enabled.active_reply.auto_session_title == "自定义标题-{group_id}"
+
+    cfg_disabled = parse_plugin_config({"active_reply": {"auto_create_session": False}})
+    assert cfg_disabled.active_reply.auto_create_session is False
+
+    cfg_empty_title = parse_plugin_config(
+        {"active_reply": {"auto_session_title": ""}}
+    )
+    assert cfg_empty_title.active_reply.auto_session_title == "主动回复-{group_id}"

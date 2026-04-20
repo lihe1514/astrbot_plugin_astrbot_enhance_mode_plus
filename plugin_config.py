@@ -94,6 +94,8 @@ class ActiveReplyConfig:
     model_choice_provider_id: str = ""
     model_choice_prompt: str = DEFAULT_MODEL_CHOICE_PROMPT
     whitelist: list[str] = field(default_factory=list)
+    auto_create_session: bool = False
+    auto_session_title: str = "主动回复-{group_id}"
 
 
 @dataclass(frozen=True)
@@ -225,6 +227,10 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
             active_reply_raw.get("model_choice_prompt") or DEFAULT_MODEL_CHOICE_PROMPT
         ),
         whitelist=_parse_whitelist(active_reply_raw.get("whitelist", "")),
+        auto_create_session=_to_bool(active_reply_raw.get("auto_create_session"), False),
+        auto_session_title=str(
+            active_reply_raw.get("auto_session_title") or "主动回复-{group_id}"
+        ).strip(),
     )
 
     global_settings_raw = raw.get("global_settings", {})

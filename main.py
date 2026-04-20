@@ -1625,11 +1625,43 @@ class Main(star.Star):
                     )
                 )
                 if not session_curr_cid:
-                    logger.error(
-                        "enhance-mode | 当前未处于对话状态，无法主动回复，"
-                        "请使用 /switch 或 /new 创建一个会话。"
-                    )
-                    return
+                    if cfg.active_reply.auto_create_session:
+                        group_id = (
+                            event.get_group_id()
+                            if event.get_message_type() == MessageType.GROUP_MESSAGE
+                            else ""
+                        )
+                        platform_id = str(event.get_platform_id() or "").strip()
+                        title = cfg.active_reply.auto_session_title.format(
+                            group_id=group_id or "unknown",
+                            platform_id=platform_id or "unknown",
+                        )
+                        try:
+                            session_curr_cid = (
+                                await self.context.conversation_manager.new_conversation(
+                                    event.unified_msg_origin,
+                                    platform_id=platform_id or None,
+                                    title=title,
+                                )
+                            )
+                            logger.info(
+                                "enhance-mode | 主动回复自动创建会话 | origin=%s cid=%s title=%s",
+                                event.unified_msg_origin,
+                                session_curr_cid,
+                                title,
+                            )
+                        except Exception as create_err:
+                            logger.error(
+                                "enhance-mode | 自动创建会话失败: %s",
+                                create_err,
+                            )
+                            return
+                    else:
+                        logger.error(
+                            "enhance-mode | 当前未处于对话状态，无法主动回复，"
+                            "请使用 /switch 或 /new 创建一个会话，或开启 auto_create_session。"
+                        )
+                        return
 
                 conv = await self.context.conversation_manager.get_conversation(
                     event.unified_msg_origin,

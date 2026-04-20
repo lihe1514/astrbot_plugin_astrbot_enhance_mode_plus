@@ -146,6 +146,8 @@
 | `model_choice_provider_id` | string | `""` | `model_choice` 判定模型的提供商 ID，空则使用当前会话默认提供商 |
 | `model_choice_prompt` | string | schema 默认值 | 判定提示词，支持占位符 |
 | `whitelist` | string | `""` | 逗号分隔来源/群号白名单 |
+| `auto_create_session` | bool | `false` | 无会话时自动创建会话（否则跳过并输出错误日志） |
+| `auto_session_title` | string | `"主动回复-{group_id}"` | 自动创建会话的标题模板，支持 `{group_id}`、`{platform_id}` 占位符 |
 
 ### `memory_rag`
 
