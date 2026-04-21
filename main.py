@@ -480,15 +480,26 @@ class Main(star.Star):
     def _allow_active_reply(self, event: AstrMessageEvent, cfg: PluginConfig) -> bool:
         ar = cfg.active_reply
         if not cfg.active_reply_enabled:
+            logger.debug(
+                "enhance-mode | active_reply disabled | reason=active_reply_enabled_false"
+            )
             return False
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return False
         if event.is_at_or_wake_command:
+            logger.debug(
+                "enhance-mode | active_reply skipped | reason=is_at_or_wake_command"
+            )
             return False
         if ar.whitelist and (
             event.unified_msg_origin not in ar.whitelist
             and (event.get_group_id() and event.get_group_id() not in ar.whitelist)
         ):
+            logger.debug(
+                "enhance-mode | active_reply skipped | reason=not_in_whitelist origin=%s group_id=%s",
+                event.unified_msg_origin,
+                event.get_group_id(),
+            )
             return False
         return True
 
@@ -1489,13 +1500,20 @@ class Main(star.Star):
             return await self._need_active_reply_model_choice(event, cfg)
         sample = random.random()
         decision = sample < ar.possibility
-        logger.debug(
-            "enhance-mode | active_reply probability | origin=%s sample=%.4f threshold=%.4f decision=%s",
-            event.unified_msg_origin,
-            sample,
-            ar.possibility,
-            decision,
-        )
+        if decision:
+            logger.info(
+                "enhance-mode | active_reply probability hit | origin=%s sample=%.4f threshold=%.4f",
+                event.unified_msg_origin,
+                sample,
+                ar.possibility,
+            )
+        else:
+            logger.debug(
+                "enhance-mode | active_reply probability miss | origin=%s sample=%.4f threshold=%.4f",
+                event.unified_msg_origin,
+                sample,
+                ar.possibility,
+            )
         return decision
 
     @filter.on_llm_request()
@@ -1580,6 +1598,7 @@ class Main(star.Star):
         event.stop_event()
 
     @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
