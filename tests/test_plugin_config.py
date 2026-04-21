@@ -31,7 +31,7 @@ def test_probability_is_clamped_and_nan_falls_back() -> None:
     assert cfg_high.active_reply_enabled is True
 
     cfg_low = parse_plugin_config({"active_reply": {"possibility": -0.5}})
-    assert math.isclose(cfg_low.active_reply.possibility, 0.0)
+    assert math.isclose(cfg_low.active_reply.possibility, 0.05)
 
     cfg_nan = parse_plugin_config({"active_reply": {"possibility": "nan"}})
     assert math.isclose(cfg_nan.active_reply.possibility, 0.1)

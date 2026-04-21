@@ -62,7 +62,7 @@ def _to_probability(value: Any, default: float) -> float:
     parsed = _to_float(value, default)
     if not math.isfinite(parsed):
         parsed = default
-    return min(1.0, max(0.0, parsed))
+    return min(1.0, max(0.05, parsed))
 
 
 def _parse_whitelist(value: Any) -> list[str]:

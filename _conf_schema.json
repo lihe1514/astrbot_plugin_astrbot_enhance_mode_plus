@@ -68,7 +68,7 @@
             },
             "possibility": {
                 "description": "回复概率",
-                "hint": "当 mode=probability 时生效，范围建议 0.0 - 1.0。",
+                "hint": "当 mode=probability 时生效，范围 0.05 - 1.0。",
                 "type": "float",
                 "default": 0.1
             },

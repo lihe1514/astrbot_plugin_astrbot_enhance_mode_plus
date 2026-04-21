@@ -140,7 +140,7 @@
 | --- | --- | --- | --- |
 | `enable` | bool | `false` | 启用主动回复 |
 | `mode` | string | `"probability"` | `probability` 或 `model_choice` |
-| `possibility` | float | `0.1` | 概率触发时生效 |
+| `possibility` | float | `0.1` | 概率触发时生效，范围 0.05 - 1.0 |
 | `model_stack_size` | int | `8` | `model_choice` 栈长度 |
 | `model_history_messages` | int | `0` | `model_choice` 额外历史条数 |
 | `model_choice_provider_id` | string | `""` | `model_choice` 判定模型的提供商 ID，空则使用当前会话默认提供商 |
