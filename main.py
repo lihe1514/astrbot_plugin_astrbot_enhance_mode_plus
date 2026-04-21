@@ -1823,9 +1823,8 @@ class Main(star.Star):
             is_active_triggered = event.get_extra(
                 "_enhance_active_reply_triggered", False
             )
-            active_mode = event.get_extra("_enhance_active_reply_mode", "")
             if is_active_triggered:
-                # 主动回复模式：不引用消息，直接参与群聊
+                # 主动回复模式
                 req.prompt = (
                     f"You are now in a chatroom. The chat history is as follows:\n{bounded_chats}\n\n"
                     "You decided to actively join this conversation. "
@@ -1836,12 +1835,12 @@ class Main(star.Star):
                     f"{interaction_instructions}"
                 )
             else:
+                # 被@后的正常回复
                 prompt = req.prompt
                 req.prompt = (
                     f"You are now in a chatroom. The chat history is as follows:\n{bounded_chats}\n\n"
                     f"Now, a new message is coming: `{prompt}`. "
                     "Please react to it. Your entire output is your reply to this message. "
-                    "Quote the message which is coming in most cases. "
                     "Only output your response and do not output any other information. "
                     "You MUST use the SAME language as the chatroom is using."
                     f"{interaction_instructions}"
@@ -1874,14 +1873,12 @@ class Main(star.Star):
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
 
-        # 主动回复时移除 Reply 组件（不引用消息）
-        is_active_triggered = event.get_extra("_enhance_active_reply_triggered", False)
-        if is_active_triggered:
-            result.chain = [
-                comp for comp in result.chain if not isinstance(comp, Reply)
-            ]
-            if not result.chain:
-                return
+        # 移除 Reply 组件（不引用消息）
+        result.chain = [
+            comp for comp in result.chain if not isinstance(comp, Reply)
+        ]
+        if not result.chain:
+            return
 
         transformed = transform_result_chain(
             result.chain,
