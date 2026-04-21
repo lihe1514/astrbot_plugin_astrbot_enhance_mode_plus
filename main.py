@@ -1600,10 +1600,16 @@ class Main(star.Star):
     @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
     @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
-        if event.get_message_type() != MessageType.GROUP_MESSAGE:
-            return
-
+        origin = event.unified_msg_origin
         cfg = self._cfg()
+
+        logger.info(
+            "enhance-mode | on_group_message | origin=%s group_history=%s active_reply=%s",
+            origin,
+            cfg.group_history_enabled,
+            cfg.active_reply_enabled,
+        )
+
         if not cfg.group_history_enabled and not cfg.active_reply_enabled:
             return
 
@@ -1612,6 +1618,10 @@ class Main(star.Star):
             for comp in event.message_obj.message
         )
         if not has_content:
+            logger.debug(
+                "enhance-mode | on_group_message skipped | reason=no_content origin=%s",
+                origin,
+            )
             return
 
         need_active = await self._need_active_reply(event, cfg)
