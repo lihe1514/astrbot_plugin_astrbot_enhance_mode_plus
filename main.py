@@ -1824,12 +1824,13 @@ class Main(star.Star):
                 "_enhance_active_reply_triggered", False
             )
             active_mode = event.get_extra("_enhance_active_reply_mode", "")
-            if is_active_triggered and active_mode == "model_choice":
+            if is_active_triggered:
+                # 主动回复模式：不引用消息，直接参与群聊
                 req.prompt = (
                     f"You are now in a chatroom. The chat history is as follows:\n{bounded_chats}\n\n"
-                    "You decided to actively join this conversation because some recent messages are worth replying to.\n"
-                    "Choose the message(s) you want to respond to from the chat history above, "
-                    "and compose a natural reply. Quote the message you choose in most cases.\n"
+                    "You decided to actively join this conversation. "
+                    "Compose a natural reply without quoting or mentioning anyone specifically. "
+                    "Just share your thoughts naturally as if you're another participant in the chat.\n"
                     "Only output your response and do not output any other information. "
                     "You MUST use the SAME language as the chatroom is using."
                     f"{interaction_instructions}"
@@ -1872,6 +1873,15 @@ class Main(star.Star):
 
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return
+
+        # 主动回复时移除 Reply 组件（不引用消息）
+        is_active_triggered = event.get_extra("_enhance_active_reply_triggered", False)
+        if is_active_triggered:
+            result.chain = [
+                comp for comp in result.chain if not isinstance(comp, Reply)
+            ]
+            if not result.chain:
+                return
 
         transformed = transform_result_chain(
             result.chain,
