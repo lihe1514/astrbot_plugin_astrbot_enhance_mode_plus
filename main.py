@@ -2753,6 +2753,88 @@ class Main(star.Star):
             )
         yield event.plain_result(message)
 
+    @permission_type(PermissionType.ADMIN)
+    @enhance.command("reset-session")
+    async def reset_session(
+        self, event: AstrMessageEvent, origin: str = ""
+    ) -> AsyncGenerator[MessageEventResult, None]:
+        """
+        重置 LLM 会话历史，用于人格切换后使其生效。
+
+        用法:
+        /enhance reset-session          - 重置当前会话
+        /enhance reset-session <origin> - 重置指定 origin 的会话
+        /enhance reset-session --all    - 重置所有追踪过的会话
+
+        origin 格式: platform_name:message_type:session_id
+        示例: aiocqhttp:group_message:123456789
+        """
+        conv_mgr = self.context.conversation_manager
+
+        # 重置所有会话
+        if origin == "--all":
+            reset_count = 0
+            for tracked_origin in list(self.runtime.origin_lru.keys()):
+                try:
+                    cid = await conv_mgr.get_curr_conversation_id(tracked_origin)
+                    if cid:
+                        await conv_mgr.update_conversation(
+                            unified_msg_origin=tracked_origin,
+                            conversation_id=cid,
+                            history=[],
+                        )
+                        reset_count += 1
+                        logger.info(
+                            "enhance-mode | reset-session | origin=%s cid=%s",
+                            tracked_origin,
+                            cid,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "enhance-mode | reset-session failed | origin=%s error=%s",
+                        tracked_origin,
+                        e,
+                    )
+            yield event.plain_result(f"已重置 {reset_count} 个会话的历史记录。")
+            return
+
+        # 重置指定 origin 的会话
+        if origin:
+            cid = await conv_mgr.get_curr_conversation_id(origin)
+            if not cid:
+                yield event.plain_result(f"未找到 origin={origin} 的活跃会话。")
+                return
+            await conv_mgr.update_conversation(
+                unified_msg_origin=origin,
+                conversation_id=cid,
+                history=[],
+            )
+            logger.info(
+                "enhance-mode | reset-session | origin=%s cid=%s",
+                origin,
+                cid,
+            )
+            yield event.plain_result(f"已重置会话历史: origin={origin} cid={cid}")
+            return
+
+        # 重置当前会话
+        curr_origin = event.unified_msg_origin
+        curr_cid = await conv_mgr.get_curr_conversation_id(curr_origin)
+        if not curr_cid:
+            yield event.plain_result("当前没有活跃的会话。")
+            return
+        await conv_mgr.update_conversation(
+            unified_msg_origin=curr_origin,
+            conversation_id=curr_cid,
+            history=[],
+        )
+        logger.info(
+            "enhance-mode | reset-session | origin=%s cid=%s",
+            curr_origin,
+            curr_cid,
+        )
+        yield event.plain_result(f"已重置当前会话历史: cid={curr_cid}")
+
     async def terminate(self) -> None:
         logger.info("enhance-mode | plugin terminating")
         await self._stop_memory_rag_webui()
