@@ -1519,6 +1519,17 @@ class Main(star.Star):
     @filter.on_llm_request()
     async def inject_role(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
         cfg = self._cfg()
+
+        # 群消息延迟回复（模拟真人打字时间）
+        if event.get_message_type() == MessageType.GROUP_MESSAGE:
+            delay = random.uniform(2.0, 30.0)
+            logger.info(
+                "enhance-mode | 群消息延迟回复 | delay=%.1fs origin=%s",
+                delay,
+                event.unified_msg_origin,
+            )
+            await asyncio.sleep(delay)
+
         if not cfg.group_features.role_display:
             return
 
