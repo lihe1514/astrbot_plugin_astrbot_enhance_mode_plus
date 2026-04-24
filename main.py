@@ -2769,6 +2769,11 @@ class Main(star.Star):
         origin 格式: platform_name:message_type:session_id
         示例: aiocqhttp:group_message:123456789
         """
+        logger.info(
+            "enhance-mode | reset-session called | sender=%s origin=%s",
+            event.get_sender_id(),
+            origin,
+        )
         conv_mgr = self.context.conversation_manager
 
         # 重置所有会话
