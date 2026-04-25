@@ -106,6 +106,9 @@ class GroupFeatureEnhancementConfig:
     ban_control_enable: bool = True
     ban_max_duration_sec: int = 2592000
     ban_allow_admin: bool = False
+    reply_delay_enable: bool = True
+    reply_delay_min: float = 2.0  # 范围: 0-60 秒
+    reply_delay_max: float = 30.0  # 范围: 0-60 秒
 
 
 @dataclass(frozen=True)
@@ -181,6 +184,9 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
     raw = raw or {}
 
     group_features_raw = raw.get("group_features", {})
+    # 解析延迟配置，范围限制 0-60 秒，确保 min <= max
+    delay_min = max(0.0, min(60.0, _to_float(group_features_raw.get("reply_delay_min"), 2.0)))
+    delay_max = max(delay_min, min(60.0, _to_float(group_features_raw.get("reply_delay_max"), 30.0)))
     group_features = GroupFeatureEnhancementConfig(
         react_mode_enable=_to_bool(group_features_raw.get("react_mode_enable"), False),
         role_display=_to_bool(group_features_raw.get("role_display"), True),
@@ -190,6 +196,9 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
             1, _to_int(group_features_raw.get("ban_max_duration_sec"), 2592000)
         ),
         ban_allow_admin=_to_bool(group_features_raw.get("ban_allow_admin"), False),
+        reply_delay_enable=_to_bool(group_features_raw.get("reply_delay_enable"), True),
+        reply_delay_min=delay_min,
+        reply_delay_max=delay_max,
     )
 
     group_history_raw = raw.get("group_history_enhancement", {})

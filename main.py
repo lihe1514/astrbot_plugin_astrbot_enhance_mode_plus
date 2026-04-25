@@ -1521,11 +1521,19 @@ class Main(star.Star):
         cfg = self._cfg()
 
         # 群消息延迟回复（模拟真人打字时间）
-        if event.get_message_type() == MessageType.GROUP_MESSAGE:
-            delay = random.uniform(2.0, 30.0)
+        if (
+            event.get_message_type() == MessageType.GROUP_MESSAGE
+            and cfg.group_features.reply_delay_enable
+        ):
+            delay = random.uniform(
+                cfg.group_features.reply_delay_min,
+                cfg.group_features.reply_delay_max,
+            )
             logger.info(
-                "enhance-mode | 群消息延迟回复 | delay=%.1fs origin=%s",
+                "enhance-mode | 群消息延迟回复 | delay=%.1fs range=[%.1f,%.1f] origin=%s",
                 delay,
+                cfg.group_features.reply_delay_min,
+                cfg.group_features.reply_delay_max,
                 event.unified_msg_origin,
             )
             await asyncio.sleep(delay)
