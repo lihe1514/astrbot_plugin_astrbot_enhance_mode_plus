@@ -97,6 +97,22 @@ class Main(star.Star):
             except Exception:
                 return datetime.timezone.utc
 
+    def _is_sleep_time(self, cfg: PluginConfig) -> bool:
+        """检查当前时间是否在睡眠时段内"""
+        if not cfg.group_features.sleep_mode_enable:
+            return False
+
+        current_hour = datetime.datetime.now(tz=self._resolve_tzinfo()).hour
+        start = cfg.group_features.sleep_start_hour
+        end = cfg.group_features.sleep_end_hour
+
+        if start <= end:
+            # 同一天内（如 1:00 - 8:00）
+            return start <= current_hour < end
+        else:
+            # 跨午夜（如 23:00 - 6:00）
+            return current_hour >= start or current_hour < end
+
     def _format_timestamp_iso(self, timestamp: float | int) -> str:
         if self.memory_rag_store is not None:
             return self.memory_rag_store.format_timestamp_iso(timestamp)
@@ -1613,6 +1629,21 @@ class Main(star.Star):
             "enhance-mode | 命中封禁名单，已拦截消息 | "
             f"user_id={sender_id} remaining={self._format_duration(active_ban.remaining_seconds)} "
             f"scope={scope_id} origin={event.unified_msg_origin}"
+        )
+        event.stop_event()
+
+    @filter.platform_adapter_type(filter.PlatformAdapterType.ALL)
+    @filter.event_message_type(filter.EventMessageType.GROUP_MESSAGE, priority=9998)
+    async def guard_sleep_mode(self, event: AstrMessageEvent) -> None:
+        """睡眠模式守卫：在指定时间段内阻止群消息回复"""
+        cfg = self._cfg()
+        if not self._is_sleep_time(cfg):
+            return
+
+        logger.info(
+            "enhance-mode | 睡眠模式中，拦截消息 | "
+            f"sleep_time=[{cfg.group_features.sleep_start_hour}:00-{cfg.group_features.sleep_end_hour}:00] "
+            f"origin={event.unified_msg_origin}"
         )
         event.stop_event()
 
