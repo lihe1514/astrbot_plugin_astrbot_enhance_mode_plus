@@ -157,6 +157,42 @@
                 "hint": "关闭时，AstrBot 内部判定为 role=admin 的用户不会被封禁工具封禁。",
                 "type": "bool",
                 "default": false
+            },
+            "reply_delay_enable": {
+                "description": "启用回复延迟",
+                "hint": "启用后群聊回复会随机延迟一段时间，模拟真人回复节奏。",
+                "type": "bool",
+                "default": true
+            },
+            "reply_delay_min": {
+                "description": "最小延迟(秒)",
+                "hint": "回复延迟的最小秒数，范围 0-60。",
+                "type": "float",
+                "default": 2.0
+            },
+            "reply_delay_max": {
+                "description": "最大延迟(秒)",
+                "hint": "回复延迟的最大秒数，范围 0-60，需大于等于最小延迟。",
+                "type": "float",
+                "default": 30.0
+            },
+            "sleep_mode_enable": {
+                "description": "启用睡眠模式",
+                "hint": "启用后在指定时段内静默群聊回复，Bot 进入「睡眠」状态。",
+                "type": "bool",
+                "default": true
+            },
+            "sleep_start_hour": {
+                "description": "睡眠开始时间",
+                "hint": "睡眠时段开始的小时数（0-23），如 1 表示凌晨 1 点开始睡眠。",
+                "type": "int",
+                "default": 1
+            },
+            "sleep_end_hour": {
+                "description": "睡眠结束时间",
+                "hint": "睡眠时段结束的小时数（0-23），如 8 表示早上 8 点结束睡眠。支持跨午夜（如 23 到 6 点）。",
+                "type": "int",
+                "default": 8
             }
         }
     },

@@ -121,6 +121,12 @@
 | `ban_control_enable` | bool | `true` | 启用封禁工具和运行时拦截 |
 | `ban_max_duration_sec` | int | `2592000` | 单次封禁时长上限（秒） |
 | `ban_allow_admin` | bool | `false` | 是否允许封禁管理员 |
+| `reply_delay_enable` | bool | `true` | 启用回复延迟 |
+| `reply_delay_min` | float | `2.0` | 最小延迟秒数（0-60） |
+| `reply_delay_max` | float | `30.0` | 最大延迟秒数（0-60） |
+| `sleep_mode_enable` | bool | `true` | 启用睡眠模式 |
+| `sleep_start_hour` | int | `1` | 睡眠开始时间（0-23） |
+| `sleep_end_hour` | int | `8` | 睡眠结束时间（0-23） |
 
 ### `group_history_enhancement`
 
