@@ -2818,7 +2818,8 @@ class Main(star.Star):
         # 重置所有会话
         if origin == "--all":
             reset_count = 0
-            for tracked_origin in list(self.runtime.origin_lru.keys()):
+            # 使用 all_origins 获取所有追踪过的会话（不依赖 LRU）
+            for tracked_origin in list(self.runtime.all_origins):
                 try:
                     cid = await conv_mgr.get_curr_conversation_id(tracked_origin)
                     if cid:
