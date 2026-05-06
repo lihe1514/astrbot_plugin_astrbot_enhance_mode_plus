@@ -89,6 +89,7 @@ class ActiveReplyConfig:
     enable: bool = False
     mode: str = "probability"
     possibility: float = 0.1
+    at_reply_possibility: float = 0.5
     model_stack_size: int = 8
     model_history_messages: int = 0
     model_choice_provider_id: str = ""
@@ -234,6 +235,7 @@ def parse_plugin_config(raw: dict[str, Any] | None) -> PluginConfig:
         enable=_to_bool(active_reply_raw.get("enable"), False),
         mode=mode,
         possibility=_to_probability(active_reply_raw.get("possibility"), 0.1),
+        at_reply_possibility=_to_probability(active_reply_raw.get("at_reply_possibility"), 0.5),
         model_stack_size=max(1, _to_int(active_reply_raw.get("model_stack_size"), 8)),
         model_history_messages=max(
             0, _to_int(active_reply_raw.get("model_history_messages"), 0)

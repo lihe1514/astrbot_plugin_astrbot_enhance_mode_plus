@@ -72,6 +72,12 @@
                 "type": "float",
                 "default": 0.1
             },
+            "at_reply_possibility": {
+                "description": "被@或引用回复时的概率",
+                "hint": "当被@或引用回复时，LLM 主动回复的概率，范围 0.0 - 1.0。默认 0.5（50%）。",
+                "type": "float",
+                "default": 0.5
+            },
             "model_stack_size": {
                 "description": "模型触发栈长度",
                 "hint": "当 mode=model_choice 时生效，累计到该条数后触发一次模型判定。",
@@ -86,7 +92,7 @@
             },
             "model_choice_provider_id": {
                 "description": "模型判定提供商 ID",
-                "hint": "当 mode=model_choice 时生效。用于“是否主动回复”判定，留空使用当前会话默认提供商。",
+                "hint": "当 mode=model_choice 时生效。用于\"是否主动回复\"判定，留空使用当前会话默认提供商。",
                 "type": "string",
                 "_special": "select_provider",
                 "default": ""
@@ -136,7 +142,7 @@
             },
             "mention_parse": {
                 "description": "Mention/Quote 标签解析",
-                "hint": "解析 LLM 输出中的 <mention id=\"用户ID\"/> 与 <quote id=\"消息ID\"/>，并转换为平台消息组件。",
+                "hint": "解析 LLM 输出中的 <mention id=\"用户 ID\"/> 与 <quote id=\"消息 ID\"/>，并转换为平台消息组件。",
                 "type": "bool",
                 "default": true
             },
@@ -147,7 +153,7 @@
                 "default": true
             },
             "ban_max_duration_sec": {
-                "description": "最大封禁时长(秒)",
+                "description": "最大封禁时长 (秒)",
                 "hint": "模型通过 enhance_ban_user 工具设置的单次封禁时长上限（秒），超出会自动截断到该值。",
                 "type": "int",
                 "default": 2592000
@@ -165,13 +171,13 @@
                 "default": true
             },
             "reply_delay_min": {
-                "description": "最小延迟(秒)",
+                "description": "最小延迟 (秒)",
                 "hint": "回复延迟的最小秒数，范围 0-60。",
                 "type": "float",
                 "default": 2.0
             },
             "reply_delay_max": {
-                "description": "最大延迟(秒)",
+                "description": "最大延迟 (秒)",
                 "hint": "回复延迟的最大秒数，范围 0-60，需大于等于最小延迟。",
                 "type": "float",
                 "default": 30.0
@@ -221,14 +227,14 @@
                 "default": "You are a web research assistant. Use live web search/browsing when answering. Return ONLY a single JSON object with keys: content (string), sources (array of objects with url/title/snippet when possible). Keep content concise and evidence-backed. IMPORTANT: Do NOT use Markdown formatting in the content field - use plain text only."
             },
             "timeout_sec": {
-                "description": "搜索超时(秒)",
+                "description": "搜索超时 (秒)",
                 "hint": "单次搜索调用最大等待时间。",
                 "type": "float",
                 "default": 60
             },
             "request_mode": {
                 "description": "请求模式",
-                "hint": "可选: auto / responses / chat_completions。auto 会先尝试 responses，再回退 chat_completions。",
+                "hint": "可选：auto / responses / chat_completions。auto 会先尝试 responses，再回退 chat_completions。",
                 "type": "string",
                 "default": "auto"
             },
@@ -315,7 +321,7 @@
                 "default": ""
             },
             "session_timeout": {
-                "description": "会话超时(秒)",
+                "description": "会话超时 (秒)",
                 "hint": "登录后的会话有效时长（秒）。",
                 "type": "int",
                 "default": 3600
@@ -346,13 +352,13 @@
                 "type": "object",
                 "items": {
                     "image_caption_sec": {
-                        "description": "图片转述超时(秒)",
+                        "description": "图片转述超时 (秒)",
                         "hint": "图片转述调用 LLM 的超时时间。",
                         "type": "float",
                         "default": 45
                     },
                     "model_choice_sec": {
-                        "description": "模型判定超时(秒)",
+                        "description": "模型判定超时 (秒)",
                         "hint": "model_choice 判定调用 LLM 的超时时间。",
                         "type": "float",
                         "default": 45

@@ -502,11 +502,33 @@ class Main(star.Star):
             return False
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return False
-        if event.is_at_or_wake_command:
+
+        # 检查是否是 @ 或唤醒命令
+        is_at_or_wake = event.is_at_or_wake_command
+        if is_at_or_wake:
+            # @ 或唤醒命令时，按 at_reply_possibility 概率判断
+            sample = random.random()
+            if sample >= ar.at_reply_possibility:
+                logger.debug(
+                    "enhance-mode | active_reply skipped | reason=at_reply_probability_miss "
+                    "sample=%.4f threshold=%.4f",
+                    sample,
+                    ar.at_reply_possibility,
+                )
+                return False
+            logger.info(
+                "enhance-mode | active_reply triggered by @/quote | "
+                "sample=%.4f threshold=%.4f",
+                sample,
+                ar.at_reply_possibility,
+            )
+        else:
+            # 非 @ 消息，跳过（由概率模式或 model_choice 模式处理）
             logger.debug(
-                "enhance-mode | active_reply skipped | reason=is_at_or_wake_command"
+                "enhance-mode | active_reply skipped | reason=is_not_at_or_wake_command"
             )
             return False
+
         if ar.whitelist and (
             event.unified_msg_origin not in ar.whitelist
             and (event.get_group_id() and event.get_group_id() not in ar.whitelist)
