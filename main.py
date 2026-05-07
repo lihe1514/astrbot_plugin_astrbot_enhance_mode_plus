@@ -522,12 +522,8 @@ class Main(star.Star):
                 sample,
                 ar.at_reply_possibility,
             )
-        else:
-            # 非 @ 消息，跳过（由概率模式或 model_choice 模式处理）
-            logger.debug(
-                "enhance-mode | active_reply skipped | reason=is_not_at_or_wake_command"
-            )
-            return False
+            # @消息通过检查，继续往下走
+        # 非@消息：不在此处拦截，由 _need_active_reply 中的概率/model_choice 处理
 
         if ar.whitelist and (
             event.unified_msg_origin not in ar.whitelist
