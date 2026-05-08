@@ -1526,12 +1526,19 @@ class Main(star.Star):
     async def _need_active_reply(
         self, event: AstrMessageEvent, cfg: PluginConfig
     ) -> bool:
+        is_at_or_wake = event.is_at_or_wake_command
         if not self._allow_active_reply(event, cfg):
             return False
 
         ar = cfg.active_reply
         if ar.mode == "model_choice":
             return await self._need_active_reply_model_choice(event, cfg)
+
+        # @/quote 消息已在 _allow_active_reply 中用 at_reply_possibility 判断，直接通过
+        if is_at_or_wake:
+            return True
+
+        # 非@消息：按 possibility 概率判断
         sample = random.random()
         decision = sample < ar.possibility
         if decision:
