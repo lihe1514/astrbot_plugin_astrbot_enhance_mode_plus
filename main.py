@@ -1517,18 +1517,16 @@ class Main(star.Star):
         if ar.mode == "model_choice":
             return await self._need_active_reply_model_choice(event, cfg)
 
-        # @/quote 消息：使用 at_reply_possibility 概率判断
-        # 非@消息：使用 possibility 概率判断
-        threshold = ar.at_reply_possibility if is_at_or_wake else ar.possibility
+        # 所有消息统一使用 possibility 概率判断
         sample = random.random()
-        decision = sample < threshold
+        decision = sample < ar.possibility
         if decision:
             reason = "@/quote" if is_at_or_wake else "probability"
             logger.info(
                 f"enhance-mode | active_reply {reason} hit | origin=%s sample=%.4f threshold=%.4f",
                 event.unified_msg_origin,
                 sample,
-                threshold,
+                ar.possibility,
             )
         else:
             reason = "@/quote" if is_at_or_wake else "probability"
@@ -1536,7 +1534,7 @@ class Main(star.Star):
                 f"enhance-mode | active_reply {reason} miss | origin=%s sample=%.4f threshold=%.4f",
                 event.unified_msg_origin,
                 sample,
-                threshold,
+                ar.possibility,
             )
         return decision
 

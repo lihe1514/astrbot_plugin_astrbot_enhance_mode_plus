@@ -68,15 +68,16 @@
             },
             "possibility": {
                 "description": "回复概率",
-                "hint": "当 mode=probability 时生效，范围 0.05 - 1.0。",
+                "hint": "当 mode=probability 时生效，所有消息（包括@和引用）统一使用此概率。范围 0.05 - 1.0。",
                 "type": "float",
                 "default": 0.1
             },
             "at_reply_possibility": {
                 "description": "被@或引用回复时的概率",
-                "hint": "当被@或引用回复时，LLM 主动回复的概率，范围 0.0 - 1.0。默认 0.5（50%）。",
+                "hint": "已废弃，所有消息统一使用 possibility 配置。",
                 "type": "float",
-                "default": 0.5
+                "default": 0.5,
+                "deprecated": true
             },
             "model_stack_size": {
                 "description": "模型触发栈长度",
