@@ -503,28 +503,9 @@ class Main(star.Star):
         if event.get_message_type() != MessageType.GROUP_MESSAGE:
             return False
 
-        # 检查是否是 @ 或唤醒命令
+        # 检查是否是 @ 或唤醒命令（仅记录，不做概率判断）
         is_at_or_wake = event.is_at_or_wake_command
         logger.debug(f"enhance-mode | _allow_active_reply | is_at_or_wake={is_at_or_wake}")
-        if is_at_or_wake:
-            # @ 或唤醒命令时，按 at_reply_possibility 概率判断
-            sample = random.random()
-            if sample >= ar.at_reply_possibility:
-                logger.debug(
-                    "enhance-mode | active_reply skipped | reason=at_reply_probability_miss "
-                    "sample=%.4f threshold=%.4f",
-                    sample,
-                    ar.at_reply_possibility,
-                )
-                return False
-            logger.info(
-                "enhance-mode | active_reply triggered by @/quote | "
-                "sample=%.4f threshold=%.4f",
-                sample,
-                ar.at_reply_possibility,
-            )
-            # @消息通过检查，继续往下走
-        # 非@消息：不在此处拦截，由 _need_active_reply 中的概率/model_choice 处理
 
         if ar.whitelist and (
             event.unified_msg_origin not in ar.whitelist
@@ -1536,26 +1517,26 @@ class Main(star.Star):
         if ar.mode == "model_choice":
             return await self._need_active_reply_model_choice(event, cfg)
 
-        # @/quote 消息已在 _allow_active_reply 中用 at_reply_possibility 判断，直接通过
-        if is_at_or_wake:
-            return True
-
-        # 非@消息：按 possibility 概率判断
+        # @/quote 消息：使用 at_reply_possibility 概率判断
+        # 非@消息：使用 possibility 概率判断
+        threshold = ar.at_reply_possibility if is_at_or_wake else ar.possibility
         sample = random.random()
-        decision = sample < ar.possibility
+        decision = sample < threshold
         if decision:
+            reason = "@/quote" if is_at_or_wake else "probability"
             logger.info(
-                "enhance-mode | active_reply probability hit | origin=%s sample=%.4f threshold=%.4f",
+                f"enhance-mode | active_reply {reason} hit | origin=%s sample=%.4f threshold=%.4f",
                 event.unified_msg_origin,
                 sample,
-                ar.possibility,
+                threshold,
             )
         else:
+            reason = "@/quote" if is_at_or_wake else "probability"
             logger.debug(
-                "enhance-mode | active_reply probability miss | origin=%s sample=%.4f threshold=%.4f",
+                f"enhance-mode | active_reply {reason} miss | origin=%s sample=%.4f threshold=%.4f",
                 event.unified_msg_origin,
                 sample,
-                ar.possibility,
+                threshold,
             )
         return decision
 
