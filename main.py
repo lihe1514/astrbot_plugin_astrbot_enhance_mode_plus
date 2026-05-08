@@ -505,6 +505,7 @@ class Main(star.Star):
 
         # 检查是否是 @ 或唤醒命令
         is_at_or_wake = event.is_at_or_wake_command
+        logger.debug(f"enhance-mode | _allow_active_reply | is_at_or_wake={is_at_or_wake}")
         if is_at_or_wake:
             # @ 或唤醒命令时，按 at_reply_possibility 概率判断
             sample = random.random()
@@ -1527,6 +1528,7 @@ class Main(star.Star):
         self, event: AstrMessageEvent, cfg: PluginConfig
     ) -> bool:
         is_at_or_wake = event.is_at_or_wake_command
+        logger.debug(f"enhance-mode | _need_active_reply | is_at_or_wake={is_at_or_wake}")
         if not self._allow_active_reply(event, cfg):
             return False
 
