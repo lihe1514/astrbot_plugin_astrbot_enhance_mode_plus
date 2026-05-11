@@ -1688,7 +1688,17 @@ class Main(star.Star):
             event.message_str[:50] if event.message_str else "[empty]",
         )
 
+        # 所有消息（包括@消息）都走概率判断
         need_active = await self._need_active_reply(event, cfg)
+
+        # 如果被@但概率未命中，阻止 AstrBot 框架的自动回复
+        if is_at_or_wake and not need_active:
+            logger.info(
+                "enhance-mode | @消息概率未命中，阻止自动回复 | origin=%s",
+                origin,
+            )
+            event.stop_event()
+            return
 
         if cfg.group_history_enabled:
             try:
