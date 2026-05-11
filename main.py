@@ -1680,6 +1680,14 @@ class Main(star.Star):
             )
             return
 
+        is_at_or_wake = event.is_at_or_wake_command
+        logger.info(
+            "enhance-mode | on_group_message | is_at_or_wake=%s origin=%s msg=%s",
+            is_at_or_wake,
+            origin,
+            event.message_str[:50] if event.message_str else "[empty]",
+        )
+
         need_active = await self._need_active_reply(event, cfg)
 
         if cfg.group_history_enabled:
